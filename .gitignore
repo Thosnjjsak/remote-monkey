@@ -1,0 +1,14 @@
+# Byte-compiled / Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Environment / Keys
+.env
+
+# Logs & Temp files
+*.log
+*.zip
+.DS_Store

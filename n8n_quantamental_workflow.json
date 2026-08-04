@@ -1,0 +1,142 @@
+{
+  "name": "Remote Worker Antigravity Slack Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "trigger": [
+          "message"
+        ],
+        "channelId": {
+          "__rl": true,
+          "value": "C0AJDTKMDP1",
+          "mode": "list",
+          "cachedResultName": "tuve_bible"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        -176
+      ],
+      "id": "38848625-adbb-4db6-ab7d-553f3fd16229",
+      "name": "Slack Trigger",
+      "webhookId": "b608276d-2db3-42b2-a779-6b5e5b43e999",
+      "credentials": {
+        "slackApi": {
+          "id": "ebIFvqJ7pN3MGvhC",
+          "name": "Slack account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Cleanly filter out bot messages to prevent infinite loops\nconst item = $input.first().json;\n\n// If the message came from a bot, stop execution\nif (item.bot_id || item.subtype === 'bot_message' || (item.user && item.user === 'U0BMJU01MJ5' && !item.client_msg_id)) {\n  return [];\n}\n\n// Pass human user message to HTTP Request node\nreturn [{ json: item }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        -176
+      ],
+      "id": "7b8f9e0a-1c2d-3e4f-5a6b-7c8d9e0f1a2b",
+      "name": "Filter User Messages Only"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://refute-puzzle-osmosis.ngrok-free.dev/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Bypass-Tunnel-Reminder",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"{{ $json.text || 'what date is today?' }}\",\n  \"project_dir\": \"/Users/thomaswu/Desktop\"\n}",
+        "options": {}
+      },
+      "name": "HTTP Request to Standalone Listener",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        -176
+      ],
+      "id": "14212a06-cdbd-405b-b3c1-8fe7b0a47aec"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AJDTKMDP1",
+          "mode": "list",
+          "cachedResultName": "tuve_bible"
+        },
+        "text": "={{ $json.output }}",
+        "otherOptions": {}
+      },
+      "name": "Post Output to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        860,
+        -176
+      ],
+      "id": "12b6116e-6ee3-4614-aff0-91246a0d033c",
+      "webhookId": "fd0df49a-86ed-46a2-be28-b5bc0ed35a15",
+      "credentials": {
+        "slackApi": {
+          "id": "ebIFvqJ7pN3MGvhC",
+          "name": "Slack account 2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Slack Trigger": {
+      "main": [
+        [
+          {
+            "node": "Filter User Messages Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter User Messages Only": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request to Standalone Listener",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request to Standalone Listener": {
+      "main": [
+        [
+          {
+            "node": "Post Output to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "628ad96d1331770d87a3f561c4295a7e393f5312df49d9808950bf7715a4ea56"
+  }
+}
