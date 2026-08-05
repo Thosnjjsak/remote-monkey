@@ -1,0 +1,5 @@
+# Core Antigravity Remote Agent Dependencies
+google-genai>=2.16.0
+requests>=2.34.2
+pydantic>=2.13.4
+httpx>=0.28.1

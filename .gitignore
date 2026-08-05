@@ -5,8 +5,9 @@ __pycache__/
 .venv/
 venv/
 
-# Environment / Keys
+# Environment & Binaries
 .env
+ngrok
 
 # Logs & Temp files
 *.log

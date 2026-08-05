@@ -10,6 +10,7 @@ import json
 import subprocess
 import os
 import datetime
+import random
 from google import genai
 from google.genai import types
 
@@ -171,7 +172,21 @@ class StandaloneN8nListener(BaseHTTPRequestHandler):
         self._send_response(200, {"status": "SUCCESS", "output": ai_response})
 
     def do_GET(self):
-        self._send_response(200, {"status": "ONLINE", "service": "Antigravity Autonomous Remote Developer Engine", "port": PORT})
+        funny_wake_up_messages = [
+            "⚡ I'm awake! Did someone order code, or should I just look pretty on port 5001?",
+            "☕ Fully caffeinated and ready to break... I mean, BUILD things!",
+            "🤖 Antigravity Remote Agent reporting for duty! Laptop is open, brain is online.",
+            "🚀 Back from the Matrix! What are we hacking together today, boss?",
+            "🧟 Awake from sleep state! Zero bugs were harmed during my nap.",
+            "🔋 Battery charged, Gemini initialized. Let's write some legendary code!"
+        ]
+        chosen_message = random.choice(funny_wake_up_messages)
+        self._send_response(200, {
+            "status": "ONLINE",
+            "service": "Antigravity Autonomous Remote Developer Engine",
+            "message": chosen_message,
+            "port": PORT
+        })
 
 
 def run_server():
