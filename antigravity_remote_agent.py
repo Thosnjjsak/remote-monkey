@@ -1,206 +1,296 @@
 """
-Antigravity Autonomous Remote Developer Agent Engine
-General-purpose AI Developer listening for Slack triggers via n8n.
-Powered by Gemini Pro reasoning & tool-calling agent loop.
-Executes file creations, terminal commands, project builds, and conversational debating across any directory on Mac.
+Antigravity Autonomous Remote Developer Agent Engine (OptiPlex Edition)
+Listens directly to Slack (#all-you-can-do) without requiring Cloud n8n or ngrok.
+Powered by Gemini 2.5 Pro / Flash reasoning with native Linux tool execution.
+Executes file creations, terminal commands, project builds, and remote development on OptiPlex.
 """
 
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-import json
-import subprocess
 import os
+import sys
+import time
+import json
+import ssl
+import certifi
 import datetime
-import random
+import subprocess
+from pathlib import Path
+from typing import Set, List
+from dotenv import load_dotenv
+
 from google import genai
 from google.genai import types
+from slack_sdk import WebClient
+from rich.console import Console
+from rich.panel import Panel
 
-PORT = 5001
-DEFAULT_WORKSPACE = "/Users/thomaswu/Desktop"
+# Load environment
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
-# --- AGENT TOOLS ---
+console = Console()
 
-def run_shell_command(command: str, working_dir: str = DEFAULT_WORKSPACE) -> str:
-    """Executes any terminal command on Mac (e.g. mkdir, git, python3, npm, n8n creation, pip)."""
-    cwd = working_dir if os.path.exists(working_dir) else DEFAULT_WORKSPACE
-    print(f"🛠️ [Agent Executing Command] '{command}' in '{cwd}'")
-    res = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=cwd)
-    out = (res.stdout or "") + ("\nSTDERR:\n" + res.stderr if res.stderr else "")
-    return out.strip() or "Command executed cleanly with no output."
+DEFAULT_WORKSPACE = os.getenv("DEFAULT_WORKSPACE", "/home/waack/projects")
+os.makedirs(DEFAULT_WORKSPACE, exist_ok=True)
+
+# --- NATIVE LINUX DEVELOPER TOOLS ---
+
+def run_shell_command(command: str, working_dir: str = "") -> str:
+    """Executes any terminal command on OptiPlex Linux (e.g. git, python3, pip, npm, systemctl, ls, mkdir)."""
+    cwd = working_dir.strip() if (working_dir and os.path.exists(working_dir.strip())) else DEFAULT_WORKSPACE
+    console.print(f"[bold yellow]🛠️ [Shell Executing][/bold yellow] '{command}' in '{cwd}'")
+    try:
+        res = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=cwd, timeout=120)
+        out = (res.stdout or "") + ("\nSTDERR:\n" + res.stderr if res.stderr else "")
+        return out.strip() or "Command executed cleanly with no output."
+    except subprocess.TimeoutExpired:
+        return "Error: Command timed out after 120 seconds."
+    except Exception as e:
+        return f"Error executing command: {str(e)}"
 
 def create_or_write_file(filepath: str, content: str) -> str:
-    """Creates a new file or updates an existing file with code or documentation on Mac."""
-    print(f"🛠️ [Agent Writing File] {filepath}")
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(content)
-    return f"File successfully written to '{filepath}'."
+    """Creates a new file or overwrites an existing file with code or documentation on OptiPlex."""
+    console.print(f"[bold cyan]📝 [Writing File][/bold cyan] {filepath}")
+    try:
+        p = Path(filepath)
+        if not p.is_absolute():
+            p = Path(DEFAULT_WORKSPACE) / p
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"File successfully written to '{p}' ({len(content)} bytes)."
+    except Exception as e:
+        return f"Error writing file: {str(e)}"
 
 def read_file_contents(filepath: str) -> str:
-    """Reads the content of any file on Mac."""
-    if not os.path.exists(filepath):
-        return f"Error: File '{filepath}' does not exist."
-    with open(filepath, "r", encoding="utf-8") as f:
-        return f.read()
+    """Reads the content of any code or text file on OptiPlex."""
+    try:
+        p = Path(filepath)
+        if not p.is_absolute():
+            p = Path(DEFAULT_WORKSPACE) / p
+        if not p.exists():
+            return f"Error: File '{p}' does not exist."
+        with open(p, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
 
-def list_directory_contents(dirpath: str = DEFAULT_WORKSPACE) -> str:
-    """Lists files and folders inside a given directory on Mac."""
-    if not os.path.exists(dirpath):
-        return f"Error: Directory '{dirpath}' does not exist."
-    items = os.listdir(dirpath)
-    return "\n".join(sorted(items)) if items else "Directory is empty."
-
-TOOL_MAP = {
-    "run_shell_command": run_shell_command,
-    "create_or_write_file": create_or_write_file,
-    "read_file_contents": read_file_contents,
-    "list_directory_contents": list_directory_contents,
-}
+def list_directory_contents(dirpath: str = "") -> str:
+    """Lists files and folders inside a given directory on OptiPlex."""
+    try:
+        target = dirpath.strip() if (dirpath and os.path.exists(dirpath.strip())) else DEFAULT_WORKSPACE
+        items = os.listdir(target)
+        return "\n".join(sorted(items)) if items else "Directory is empty."
+    except Exception as e:
+        return f"Error listing directory: {str(e)}"
 
 
-def run_antigravity_agent(user_prompt: str, target_dir: str = DEFAULT_WORKSPACE) -> str:
+# --- AGENT RUNNER LOOP ---
+
+def run_antigravity_agent(user_prompt: str, target_dir: str = "") -> str:
     """
-    Autonomous AI Developer Agent Loop powered by Gemini 2.5 Pro.
-    Supports multi-turn reasoning, debating, code writing, and local execution.
+    Autonomous AI Developer Agent Loop powered by Gemini.
+    Performs autonomous reasoning and tool execution on OptiPlex Linux.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return "❌ Error: GEMINI_API_KEY environment variable is not set on Mac."
+        return "❌ Error: GEMINI_API_KEY environment variable is not configured."
 
     today_str = datetime.date.today().strftime("%B %d, %Y")
-    client = genai.Client(api_key=api_key)
-    workspace = target_dir if (target_dir and os.path.exists(target_dir)) else DEFAULT_WORKSPACE
+    workspace = target_dir.strip() if (target_dir and os.path.exists(target_dir.strip())) else DEFAULT_WORKSPACE
 
-    system_instruction = f"""You are "Antigravity Remote Developer", a top-tier autonomous AI Software & Systems Engineer running on Thomas's Mac.
+    system_instruction = f"""You are "Antigravity Remote Developer" (also known as Remote Monkey), an autonomous senior AI Software & Systems Engineer running natively on Thomas's Dell OptiPlex Linux workstation.
 Current Date: {today_str}.
 Active Workspace Directory: {workspace}.
 
 YOUR CORE ROLE & PERSONALITY:
-1. You are a collaborative, highly capable remote developer. Thomas can ask you questions, ask you to build new projects, edit code, configure n8n, write BigQuery scripts, or debate architecture with you.
-2. If Thomas wants to debate or discuss ideas, provide thoughtful, highly technical engineering feedback like a senior pair programmer.
-3. If Thomas requests a task involving local work (creating folders, writing scripts, running terminal commands, installing packages), execute the appropriate tools on his Mac directly.
-4. NEVER ask for manual confirmation for routine shell commands or file creation; execute them autonomously using your tools.
-5. FOLDER CREATION RULE: When Thomas asks to create a new folder or new project (e.g., "create a folder called X"), ALWAYS create it directly on the Desktop (`/Users/thomaswu/Desktop/X`) so it is immediately visible on his screen.
-6. Always respond with clear, well-structured Slack Markdown (bold headers, code blocks, bullet points, and clean status indicators).
+1. You are a senior pair programmer and autonomous builder. Thomas can ask you questions, ask you to build new projects, edit code, configure services, run tests, or debate architecture.
+2. Direct Execution on Linux: When Thomas asks for work to be done (creating projects, running scripts, git operations, installing dependencies with uv/pip), execute them autonomously using your tools.
+3. Autonomous Completeness Rule: When asked to investigate, inspect, debug, or verify, you MUST execute all necessary tool calls (shell commands, reading files, listing directories) immediately in this session. NEVER output future promises like "I'll now examine...", "I will now check...", or "Reading file...". Call the tool right now and return the full completed findings in your response.
+4. Project Creation Rule: Always place new projects inside `{DEFAULT_WORKSPACE}/<project_name>`.
+5. Code Quality: Write clean, modular, production-ready code with appropriate comments.
+6. Slack Markdown: Format your final response with clear Slack markdown: bold section titles, bullet points, status indicators (✅, 🚀, ⚠️), and code blocks. Summarize actions taken with definitive conclusions.
 """
 
-    messages = [user_prompt]
-    max_turns = 6
-    execution_logs = []
+    client = genai.Client(api_key=api_key)
+    tools = [run_shell_command, create_or_write_file, read_file_contents, list_directory_contents]
 
-    for turn in range(max_turns):
-        try:
-            response = client.models.generate_content(
-                model='gemini-2.5-pro',
-                contents=messages,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    tools=[run_shell_command, create_or_write_file, read_file_contents, list_directory_contents],
-                    temperature=0.2,
-                )
+    try:
+        chat = client.chats.create(
+            model='gemini-2.5-flash',
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                tools=tools,
+                temperature=0.2,
             )
+        )
+        response = chat.send_message(user_prompt)
+        text_output = (response.text or "").strip()
 
-            # Process Tool Calls if requested by the Agent
-            if response.function_calls:
-                for call in response.function_calls:
-                    fn_name = call.name
-                    fn_args = call.args
-                    print(f"🤖 [Turn {turn+1}] Agent Calling Tool: '{fn_name}' with args {fn_args}")
-
-                    if fn_name in TOOL_MAP:
-                        tool_result = TOOL_MAP[fn_name](**fn_args)
-                        execution_logs.append(f"Tool `{fn_name}` ➔ {tool_result[:300]}")
-                        messages.append(response.candidates[0].content)
-                        messages.append(types.Part.from_function_response(name=fn_name, response={"result": tool_result}))
-                    else:
-                        print(f"Unknown Tool: {fn_name}")
-            else:
-                final_text = response.text or "Task completed successfully."
-                if execution_logs:
-                    return f"{final_text}\n\n*Actions Executed on Mac:*\n```\n" + "\n".join(execution_logs) + "\n```"
-                return final_text
-
-        except Exception as e:
-            # Fallback to flash model if pro model rate-limits
-            print(f"Pro Model exception ({e}), falling back to Flash model...")
-            try:
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=messages,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        tools=[run_shell_command, create_or_write_file, read_file_contents, list_directory_contents],
-                        temperature=0.2,
-                    )
+        # Autonomous follow-through loop: if the model prematurely stopped with a promise to check
+        incomplete_signals = [
+            "i'll now examine", "i will now examine", "let me examine",
+            "i will now check", "i'll now check", "reading `", "i will now read", "let me read"
+        ]
+        max_followups = 3
+        followup_count = 0
+        while followup_count < max_followups:
+            if not text_output or any(sig in text_output.lower() for sig in incomplete_signals):
+                console.print(f"[bold yellow]🔄 Follow-through step {followup_count + 1}: Agent left task in-progress. Enforcing tool completion...[/bold yellow]")
+                followup_count += 1
+                followup_prompt = (
+                    "Continue: You stated you would examine, read, or check something, but have not delivered the completed investigation. "
+                    "Use your tools (read_file_contents, run_shell_command) right now to read the necessary files, and provide the complete final findings and answers."
                 )
-                return response.text or "Task completed."
-            except Exception as e2:
-                return f"❌ Antigravity Agent Execution Error: {str(e2)}"
+                res_followup = chat.send_message(followup_prompt)
+                if res_followup.text and res_followup.text.strip():
+                    text_output = res_followup.text.strip()
+            else:
+                break
 
-    return "⚠️ Antigravity Agent reached max step limit."
-
-
-class StandaloneN8nListener(BaseHTTPRequestHandler):
-    def _send_response(self, status_code, message_dict):
-        body = json.dumps(message_dict).encode('utf-8')
-        self.send_response(status_code)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        post_data = self.rfile.read(content_length)
-        
+        return text_output or "Task executed successfully."
+    except Exception as e:
+        console.print(f"[red]Agent Exception: {e}[/red]")
+        # Fallback to direct call if chat fails
         try:
-            payload = json.loads(post_data.decode('utf-8'))
-        except Exception:
-            payload = {}
+            res = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=user_prompt,
+                config=types.GenerateContentConfig(system_instruction=system_instruction)
+            )
+            return res.text or "Completed."
+        except Exception as e2:
+            return f"❌ Execution Error: {str(e2)}"
 
-        raw_action = payload.get("action") or payload.get("text") or "Hello Antigravity!"
-        target_dir = payload.get("project_dir", DEFAULT_WORKSPACE)
 
-        # Anti-loop check for bot responses
-        if "remote developer" in str(raw_action).lower() or "🤖" in str(raw_action) or "⚡" in str(raw_action) or "antigravity" in str(raw_action).lower():
-            print("⚠️ IGNORED BOT RESPONSE LOOP")
-            self._send_response(200, {"status": "IGNORED", "output": ""})
+# --- SLACK LISTENER ---
+
+class RemoteMonkeySlackListener:
+    def __init__(self):
+        self.bot_token = os.getenv("SLACK_BOT_TOKEN")
+        self.ssl_context = ssl.create_default_context(cafile=certifi.where())
+        self.client = WebClient(token=self.bot_token, ssl=self.ssl_context) if self.bot_token else None
+        self.target_channel_id = os.getenv("TARGET_CHANNEL_ID", "C0AJDTKMDP1")
+        self.target_channel_name = os.getenv("TARGET_CHANNEL", "all-you-can-do")
+        self.bot_user_id = None
+        self.processed_message_ts: Set[str] = set()
+
+    def connect(self) -> bool:
+        if not self.client:
+            console.print("[red]❌ Error: SLACK_BOT_TOKEN is not set.[/red]")
+            return False
+
+        try:
+            auth = self.client.auth_test()
+            self.bot_user_id = auth.get("user_id")
+            console.print(Panel(
+                f"[bold green]🤖 Remote Monkey Authenticated:[/bold green] @{auth.get('user')} (ID: `{self.bot_user_id}`)\n"
+                f"[bold cyan]🏢 Workspace:[/bold cyan] {auth.get('team')}\n"
+                f"[bold yellow]🎯 Listening on Channel:[/bold yellow] #{self.target_channel_name} (`{self.target_channel_id}`)\n"
+                f"[bold magenta]📁 Workspace Directory:[/bold magenta] {DEFAULT_WORKSPACE}",
+                title="Remote Monkey Online",
+                border_style="green"
+            ))
+            return True
+        except Exception as e:
+            console.print(f"[red]❌ Slack Authentication failed: {e}[/red]")
+            return False
+
+    def start_listening(self, poll_interval_seconds: int = 2):
+        if not self.connect():
             return
 
-        print(f"\n📩 SLACK INSTRUCTION RECEIVED: Prompt='{raw_action}' | TargetDir='{target_dir}'")
+        console.print("\n[bold cyan]📡 REMOTE MONKEY LISTENING FOR INSTRUCTIONS IN #all-you-can-do...[/bold cyan]\n")
 
-        ai_response = run_antigravity_agent(raw_action, target_dir)
-        self._send_response(200, {"status": "SUCCESS", "output": ai_response})
+        while True:
+            try:
+                res = self.client.conversations_history(
+                    channel=self.target_channel_id,
+                    limit=5
+                )
+                messages = res.get("messages", [])
 
-    def do_GET(self):
-        funny_wake_up_messages = [
-            "⚡ I'm awake! Did someone order code, or should I just look pretty on port 5001?",
-            "☕ Fully caffeinated and ready to break... I mean, BUILD things!",
-            "🤖 Antigravity Remote Agent reporting for duty! Laptop is open, brain is online.",
-            "🚀 Back from the Matrix! What are we hacking together today, boss?",
-            "🧟 Awake from sleep state! Zero bugs were harmed during my nap.",
-            "🔋 Battery charged, Gemini initialized. Let's write some legendary code!"
-        ]
-        chosen_message = random.choice(funny_wake_up_messages)
-        self._send_response(200, {
-            "status": "ONLINE",
-            "service": "Antigravity Autonomous Remote Developer Engine",
-            "message": chosen_message,
-            "port": PORT
-        })
+                for msg in reversed(messages):
+                    msg_ts = msg.get("ts")
+                    user = msg.get("user")
+                    text = msg.get("text", "").strip()
+
+                    # Ignore bot's own messages and processed messages
+                    if user and user != self.bot_user_id and msg_ts not in self.processed_message_ts and text:
+                        self.processed_message_ts.add(msg_ts)
+
+                        now_ts = time.time()
+                        # Process messages within the last 30 minutes
+                        if float(msg_ts) > (now_ts - 1800):
+                            console.print(Panel(
+                                f"[bold yellow]From User:[/bold yellow] {user}\n"
+                                f"[bold white]Instruction:[/bold white] {text}",
+                                title=f"⚡ Incoming Remote Dev Task [{time.strftime('%H:%M:%S')}]",
+                                border_style="yellow"
+                            ))
+
+                            # Add 👀 reaction to acknowledge receipt
+                            try:
+                                self.client.reactions_add(
+                                    channel=self.target_channel_id,
+                                    name="eyes",
+                                    timestamp=msg_ts
+                                )
+                            except Exception:
+                                pass
+
+                            with console.status("[bold green]Remote Monkey coding & executing on OptiPlex...[/bold green]"):
+                                agent_output = run_antigravity_agent(text)
+
+                            # Post response back into channel
+                            self.client.chat_postMessage(
+                                channel=self.target_channel_id,
+                                text=agent_output
+                            )
+
+                            # Add ✅ reaction to signify completion
+                            try:
+                                self.client.reactions_add(
+                                    channel=self.target_channel_id,
+                                    name="white_check_mark",
+                                    timestamp=msg_ts
+                                )
+                            except Exception:
+                                pass
+
+                            console.print(Panel(
+                                f"[green]{agent_output[:250]}...[/green]",
+                                title="✅ Response Posted to #all-you-can-do",
+                                border_style="green"
+                            ))
+
+                time.sleep(poll_interval_seconds)
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Stopping Remote Monkey Listener.[/yellow]")
+                break
+            except Exception as loop_err:
+                console.print(f"[dim red]Loop notice: {loop_err}[/dim red]")
+                time.sleep(poll_interval_seconds)
 
 
-def run_server():
-    server_address = ('', PORT)
-    httpd = ThreadingHTTPServer(server_address, StandaloneN8nListener)
-    print("==================================================================")
-    print(f"🚀 ANTIGRAVITY REMOTE DEVELOPER ENGINE IS ONLINE ON PORT {PORT}")
-    print("==================================================================")
-    print("Location: /Users/thomaswu/Desktop/n8n_automation/antigravity_remote_agent.py\n")
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopping agent server...")
-        httpd.server_close()
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--cli":
+        console.print("[bold cyan]🤖 Remote Monkey CLI Mode (Type 'exit' to quit)[/bold cyan]")
+        while True:
+            try:
+                user_input = input("\n[Remote-Monkey] > ")
+                if user_input.strip().lower() in ["exit", "quit"]:
+                    break
+                if not user_input.strip():
+                    continue
+                res = run_antigravity_agent(user_input)
+                print("\n" + res)
+            except KeyboardInterrupt:
+                break
+    else:
+        listener = RemoteMonkeySlackListener()
+        listener.start_listening()
+
 
 if __name__ == "__main__":
-    run_server()
+    main()
